@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
 # C extensions
 *.so
@@ -46,6 +47,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.mypy_cache/
 
 # Environments
 .env
@@ -83,6 +85,12 @@ logs/
 tmp/
 temp/
 
+# Custom directories
+profiles/
+
 # Output files
 output/
 converted/
+
+# Image files
+*.tiff
