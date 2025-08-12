@@ -1,163 +1,127 @@
+import subprocess
+import tempfile
 import os
-import fitz  # PyMuPDF
-from PIL import Image
-from typing import List, Tuple, Optional
-import logging
+from typing import Optional, Tuple
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-class PDFConverter:
-    """Class to handle PDF to TIFF conversion"""
+def pdf_to_tiff_ghostscript(
+    input_pdf_bytes: bytes,
+    dpi: int = 96,
+    first_page: Optional[int] = None,
+    last_page: Optional[int] = None,
+    icc_profile_path: Optional[str] = None
+) -> Tuple[bytes, str]:
+    """
+    Convert PDF to TIFF using Ghostscript.
     
-    def __init__(self, dpi: int = 300, output_format: str = 'TIFF'):
-        """
-        Initialize the PDF converter
+    Args:
+        input_pdf_bytes: PDF file content as bytes
+        dpi: Output DPI (default: 96)
+        first_page: First page to convert (1-indexed, optional)
+        last_page: Last page to convert (1-indexed, optional)
+        icc_profile_path: Path to ICC profile (optional, default checks /app/profiles/CoatedFOGRA39.icc)
+    
+    Returns:
+        Tuple of (tiff_bytes, output_filename)
+    
+    Raises:
+        subprocess.CalledProcessError: If Ghostscript conversion fails
+        RuntimeError: If conversion fails or file operations fail
+    """
+    
+    # Create temporary files
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as input_temp:
+        input_temp.write(input_pdf_bytes)
+        input_temp_path = input_temp.name
+    
+    with tempfile.NamedTemporaryFile(suffix='.tiff', delete=False) as output_temp:
+        output_temp_path = output_temp.name
+    
+    try:
+        # Build Ghostscript command
+        gs_cmd = [
+            'gs',
+            '-dNOPAUSE',
+            '-dBATCH',
+            '-dSAFER',
+            '-sDEVICE=tiff32nc',
+            '-sCompression=lzw',
+            f'-r{dpi}',
+            '-sProcessColorModel=DeviceCMYK',
+            '-sColorConversionStrategy=CMYK',
+            '-dOverrideICC'
+        ]
         
-        Args:
-            dpi (int): Resolution for conversion (default: 300)
-            output_format (str): Output format (default: 'TIFF')
-        """
-        self.dpi = dpi
-        self.output_format = output_format.upper()
+        # Add page range if specified
+        if first_page is not None:
+            gs_cmd.append(f'-dFirstPage={first_page}')
+        if last_page is not None:
+            gs_cmd.append(f'-dLastPage={last_page}')
         
-    def pdf_to_images(self, pdf_path: str) -> List[Image.Image]:
-        """
-        Convert PDF pages to PIL Images
+        # Add ICC profile if provided and exists
+        if icc_profile_path is None:
+            # Check default ICC profile path
+            default_icc_path = '/app/profiles/CoatedFOGRA39.icc'
+            if os.path.exists(default_icc_path):
+                icc_profile_path = default_icc_path
         
-        Args:
-            pdf_path (str): Path to the PDF file
-            
-        Returns:
-            List[Image.Image]: List of PIL Images, one per page
-        """
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-            
-        images = []
+        if icc_profile_path and os.path.exists(icc_profile_path):
+            gs_cmd.append(f'-sOutputICCProfile={icc_profile_path}')
+        
+        # Add output and input files
+        gs_cmd.extend([f'-sOutputFile={output_temp_path}', input_temp_path])
+        
+        # Run Ghostscript
+        try:
+            result = subprocess.run(
+                gs_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=300  # 5 minute timeout for large files
+            )
+        except subprocess.CalledProcessError as e:
+            # Truncate stderr for error message (max 500 chars)
+            error_msg = e.stderr[:500] if e.stderr else 'Unknown Ghostscript error'
+            raise RuntimeError(f'Ghostscript conversion failed: {error_msg}') from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError('Ghostscript conversion timed out after 5 minutes') from e
+        
+        # Read the output TIFF file
+        if not os.path.exists(output_temp_path) or os.path.getsize(output_temp_path) == 0:
+            raise RuntimeError('Ghostscript did not produce output file')
+        
+        with open(output_temp_path, 'rb') as f:
+            tiff_bytes = f.read()
+        
+        # Generate output filename
+        # Extract basename from original filename or use 'converted'
+        basename = 'converted'
+        
+        # Format page range for filename
+        if first_page is not None and last_page is not None:
+            pages_str = f'_p{first_page}-{last_page}'
+        elif first_page is not None:
+            pages_str = f'_p{first_page}+'
+        elif last_page is not None:
+            pages_str = f'_p1-{last_page}'
+        else:
+            pages_str = ''
+        
+        output_filename = f'{basename}{pages_str}_{dpi}dpi.tiff'
+        
+        return tiff_bytes, output_filename
+    
+    finally:
+        # Clean up temporary files
+        try:
+            if os.path.exists(input_temp_path):
+                os.unlink(input_temp_path)
+        except OSError:
+            pass
         
         try:
-            # Open the PDF file
-            pdf_document = fitz.open(pdf_path)
-            logger.info(f"Processing PDF with {len(pdf_document)} pages")
-            
-            # Convert each page to an image
-            for page_num in range(len(pdf_document)):
-                page = pdf_document.load_page(page_num)
-                
-                # Create a matrix for the DPI scaling
-                mat = fitz.Matrix(self.dpi / 72, self.dpi / 72)
-                
-                # Render page to pixmap
-                pixmap = page.get_pixmap(matrix=mat)
-                
-                # Convert pixmap to PIL Image
-                img_data = pixmap.tobytes("ppm")
-                img = Image.open(io.BytesIO(img_data))
-                
-                images.append(img)
-                logger.info(f"Converted page {page_num + 1}")
-                
-            pdf_document.close()
-            
-        except Exception as e:
-            logger.error(f"Error converting PDF: {str(e)}")
-            raise
-            
-        return images
-    
-    def save_images(self, images: List[Image.Image], output_path: str, 
-                   filename_prefix: str = "page") -> List[str]:
-        """
-        Save images to files
-        
-        Args:
-            images (List[Image.Image]): List of PIL Images
-            output_path (str): Directory to save images
-            filename_prefix (str): Prefix for output filenames
-            
-        Returns:
-            List[str]: List of saved file paths
-        """
-        os.makedirs(output_path, exist_ok=True)
-        saved_files = []
-        
-        for i, img in enumerate(images):
-            filename = f"{filename_prefix}_{i+1:03d}.{self.output_format.lower()}"
-            filepath = os.path.join(output_path, filename)
-            
-            try:
-                # Convert to RGB if necessary (TIFF requires RGB)
-                if img.mode != 'RGB' and self.output_format == 'TIFF':
-                    img = img.convert('RGB')
-                    
-                img.save(filepath, format=self.output_format)
-                saved_files.append(filepath)
-                logger.info(f"Saved: {filepath}")
-                
-            except Exception as e:
-                logger.error(f"Error saving image {filename}: {str(e)}")
-                raise
-                
-        return saved_files
-    
-    def convert_pdf(self, pdf_path: str, output_dir: str, 
-                   filename_prefix: Optional[str] = None) -> List[str]:
-        """
-        Complete conversion process from PDF to images
-        
-        Args:
-            pdf_path (str): Path to input PDF file
-            output_dir (str): Directory to save converted images
-            filename_prefix (str, optional): Prefix for output files
-            
-        Returns:
-            List[str]: List of saved file paths
-        """
-        if filename_prefix is None:
-            # Use PDF filename as prefix
-            basename = os.path.splitext(os.path.basename(pdf_path))[0]
-            filename_prefix = basename
-            
-        logger.info(f"Starting conversion: {pdf_path}")
-        
-        # Convert PDF to images
-        images = self.pdf_to_images(pdf_path)
-        
-        # Save images
-        saved_files = self.save_images(images, output_dir, filename_prefix)
-        
-        logger.info(f"Conversion complete. Saved {len(saved_files)} files.")
-        return saved_files
-
-    @staticmethod
-    def get_pdf_info(pdf_path: str) -> dict:
-        """
-        Get information about a PDF file
-        
-        Args:
-            pdf_path (str): Path to PDF file
-            
-        Returns:
-            dict: Dictionary containing PDF information
-        """
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-            
-        try:
-            pdf_document = fitz.open(pdf_path)
-            info = {
-                'page_count': len(pdf_document),
-                'metadata': pdf_document.metadata,
-                'file_size': os.path.getsize(pdf_path)
-            }
-            pdf_document.close()
-            return info
-            
-        except Exception as e:
-            logger.error(f"Error getting PDF info: {str(e)}")
-            raise
-
-# Import io for BytesIO
-import io
+            if os.path.exists(output_temp_path):
+                os.unlink(output_temp_path)
+        except OSError:
+            pass
