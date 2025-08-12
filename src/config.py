@@ -1,61 +1,51 @@
 import os
-from typing import Dict, Any
 
-class Config:
-    """Application configuration class"""
-    
-    # Flask configuration
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'your-secret-key-here'
-    
-    # File upload configuration
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
-    UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
-    OUTPUT_FOLDER = os.path.join(os.getcwd(), 'converted')
-    
-    # Allowed file extensions
-    ALLOWED_EXTENSIONS = {'pdf'}
-    
-    # Conversion settings
-    DEFAULT_DPI = 300
-    DEFAULT_FORMAT = 'TIFF'
-    
-    # Create directories if they don't exist
-    @staticmethod
-    def init_app(app):
-        """Initialize application with configuration"""
-        os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-        os.makedirs(Config.OUTPUT_FOLDER, exist_ok=True)
-        
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary"""
-        return {
-            'max_content_length': self.MAX_CONTENT_LENGTH,
-            'upload_folder': self.UPLOAD_FOLDER,
-            'output_folder': self.OUTPUT_FOLDER,
-            'allowed_extensions': list(self.ALLOWED_EXTENSIONS),
-            'default_dpi': self.DEFAULT_DPI,
-            'default_format': self.DEFAULT_FORMAT
-        }
+# Optional: Load environment variables from .env file for local development
+# Only import and use python-dotenv if available, but don't require it in production
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available, continue without it
+    pass
 
-class DevelopmentConfig(Config):
-    """Development configuration"""
-    DEBUG = True
-    TESTING = False
 
-class ProductionConfig(Config):
-    """Production configuration"""
-    DEBUG = False
-    TESTING = False
+def get_env_variable(name, default=None, required=False, cast_type=None):
+    """Get environment variable with optional default, type casting, and requirement checking.
+    
+    Args:
+        name (str): Environment variable name
+        default: Default value if not found
+        required (bool): If True, raises RuntimeError when variable is missing
+        cast_type: Type to cast the value to (e.g., int, float)
+    
+    Returns:
+        The environment variable value, optionally cast to specified type
+    
+    Raises:
+        RuntimeError: If required variable is not set
+        ValueError: If type casting fails
+    """
+    value = os.environ.get(name, default)
+    if required and value is None:
+        raise RuntimeError(f"Environment variable {name} is required.")
+    if cast_type and value is not None:
+        try:
+            value = cast_type(value)
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Failed to cast environment variable {name} to {cast_type.__name__}: {e}")
+    return value
 
-class TestingConfig(Config):
-    """Testing configuration"""
-    TESTING = True
-    WTF_CSRF_ENABLED = False
 
-# Configuration dictionary
-config = {
-    'development': DevelopmentConfig,
-    'production': ProductionConfig,
-    'testing': TestingConfig,
-    'default': DevelopmentConfig
-}
+# Required environment variables (secrets)
+TELEGRAM_BOT_TOKEN = get_env_variable('TELEGRAM_BOT_TOKEN', required=True)
+TELEGRAM_CHANNEL_ID = get_env_variable('TELEGRAM_CHANNEL_ID', required=True)
+ADMIN_TELEGRAM_ID = get_env_variable('ADMIN_TELEGRAM_ID', required=True)
+
+# Optional environment variables with defaults
+MAX_FILE_SIZE_MB = get_env_variable('MAX_FILE_SIZE_MB', default=35, cast_type=int)
+DEFAULT_DPI = get_env_variable('DEFAULT_DPI', default=96, cast_type=int)
+
+# Note: Secrets are never logged or printed to maintain security
+# This config will work in both local development (with optional .env file)
+# and production environments (using environment variables or GitHub Secrets)
