@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  tiff-converter-bot:
+    build: .
+    container_name: tiff_converter_bot
+    environment:
+      - TELEGRAM_BOT_TOKEN
+      - TELEGRAM_CHANNEL_ID
+      - ADMIN_TELEGRAM_ID
+    restart: unless-stopped
